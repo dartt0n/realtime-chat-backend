@@ -6,22 +6,22 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-// UserForm ...
+// UserForm represents the base form structure for user-related forms
 type UserForm struct{}
 
-// LoginForm ...
+// LoginForm contains the fields required for user login
 type LoginForm struct {
 	Email    string `form:"email" json:"email" binding:"required,email"`
 	Password string `form:"password" json:"password" binding:"required,min=3,max=50"`
 }
 
-// RegisterForm ...
+// RegisterForm contains the fields required for user registration
 type RegisterForm struct {
 	Email    string `form:"email" json:"email" binding:"required,email"`
 	Password string `form:"password" json:"password" binding:"required,min=3,max=50"`
 }
 
-// Email ...
+// Email validates and returns appropriate error messages for email field validation
 func (f UserForm) Email(tag string, errMsg ...string) (message string) {
 	switch tag {
 	case "required":
@@ -36,7 +36,7 @@ func (f UserForm) Email(tag string, errMsg ...string) (message string) {
 	}
 }
 
-// Password ...
+// Password validates and returns appropriate error messages for password field validation
 func (f UserForm) Password(tag string) (message string) {
 	switch tag {
 	case "required":
@@ -50,7 +50,7 @@ func (f UserForm) Password(tag string) (message string) {
 	}
 }
 
-// Signin ...
+// Login validates the login form and returns appropriate error messages
 func (f UserForm) Login(err error) string {
 	switch err.(type) {
 	case validator.ValidationErrors:
@@ -75,7 +75,7 @@ func (f UserForm) Login(err error) string {
 	return "Something went wrong, please try again later"
 }
 
-// Register ...
+// Register validates the registration form and returns appropriate error messages
 func (f UserForm) Register(err error) string {
 	switch err.(type) {
 	case validator.ValidationErrors:
