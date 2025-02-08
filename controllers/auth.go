@@ -12,35 +12,37 @@ import (
 	jwt "github.com/golang-jwt/jwt/v4"
 )
 
-// AuthController ...
+// AuthController handles authentication related operations
 type AuthController struct{}
 
+// NewAuthController creates and returns a new AuthController instance
 func NewAuthController() *AuthController {
 	return &AuthController{}
 }
 
-// TokenValid ...
+// TokenValid validates the authentication token from the request context
 func (ctl AuthController) TokenValid(c *gin.Context) {
 
 	tokenAuth, err := service.Auth.ExtractTokenMetadata(c.Request)
 	if err != nil {
-		//Token either expired or not valid
+		// Token either expired or not valid
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "Please login first"})
 		return
 	}
 
 	userID, err := service.Auth.FetchAuth(tokenAuth)
 	if err != nil {
-		//Token does not exists in Redis (User logged out or expired)
+		// Token does not exists in Redis (User logged out or expired)
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "Please login first"})
 		return
 	}
 
-	//To be called from GetUserID()
+	// To be called from GetUserID()
 	c.Set("userID", userID)
 }
 
-// Refresh ...
+// Refresh handles the token refresh operation by validating the refresh token
+// and generating new access and refresh token pairs
 func (ctl AuthController) Refresh(c *gin.Context) {
 	var tokenForm forms.Token
 
@@ -50,28 +52,28 @@ func (ctl AuthController) Refresh(c *gin.Context) {
 		return
 	}
 
-	//verify the token
+	// verify the token
 	token, err := jwt.Parse(tokenForm.RefreshToken, func(token *jwt.Token) (interface{}, error) {
-		//Make sure that the token method conform to "SigningMethodHMAC"
+		// Make sure that the token method conform to "SigningMethodHMAC"
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte(os.Getenv("REFRESH_SECRET")), nil
 	})
-	//if there is an error, the token must have expired
+	// if there is an error, the token must have expired
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"message": "Invalid authorization, please login again"})
 		return
 	}
-	//is token valid?
+	// is token valid?
 	if _, ok := token.Claims.(jwt.Claims); !ok && !token.Valid {
 		c.JSON(http.StatusUnauthorized, gin.H{"message": "Invalid authorization, please login again"})
 		return
 	}
-	//Since token is valid, get the uuid:
-	claims, ok := token.Claims.(jwt.MapClaims) //the token claims should conform to MapClaims
+	// Since token is valid, get the uuid:
+	claims, ok := token.Claims.(jwt.MapClaims) // the token claims should conform to MapClaims
 	if ok && token.Valid {
-		refreshUUID, ok := claims["refresh_uuid"].(string) //convert the interface to string
+		refreshUUID, ok := claims["refresh_uuid"].(string) // convert the interface to string
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"message": "Invalid authorization, please login again"})
 			return
@@ -83,21 +85,21 @@ func (ctl AuthController) Refresh(c *gin.Context) {
 			return
 		}
 
-		//Delete the previous Refresh Token
+		// Delete the previous Refresh Token
 		_, delErr := service.Auth.DeleteAuth(refreshUUID)
-		if delErr != nil { //if any goes wrong
+		if delErr != nil { // if any goes wrong
 			c.JSON(http.StatusUnauthorized, gin.H{"message": "Invalid authorization, please login again"})
 			return
 		}
 
-		//Create new pairs of refresh and access tokens
+		// Create new pairs of refresh and access tokens
 		ts, createErr := service.Auth.CreateToken(userID)
 		if createErr != nil {
 			c.JSON(http.StatusForbidden, gin.H{"message": "Invalid authorization, please login again"})
 			return
 		}
 
-		//save the tokens metadata to redis
+		// save the tokens metadata to redis
 		saveErr := service.Auth.CreateAuth(userID, ts)
 		if saveErr != nil {
 			c.JSON(http.StatusForbidden, gin.H{"message": "Invalid authorization, please login again"})

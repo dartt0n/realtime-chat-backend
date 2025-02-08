@@ -9,22 +9,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// UserController ...
+// UserController handles user-related HTTP requests and responses
 type UserController struct{}
 
+// NewUserController creates and returns a new UserController instance
 func NewUserController() *UserController {
 	return &UserController{}
 }
 
 var userForm = new(forms.UserForm)
 
-// getUserID ...
+// getUserID extracts and returns the user ID from the Gin context
 func getUserID(c *gin.Context) (userID int64) {
 	//MustGet returns the value for the given key if it exists, otherwise it panics.
 	return c.MustGet("userID").(int64)
 }
 
-// Login ...
+// Login handles user authentication requests, validates credentials and returns a JWT token
 func (ctrl UserController) Login(c *gin.Context) {
 	var loginForm forms.LoginForm
 
@@ -43,7 +44,7 @@ func (ctrl UserController) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"token": token})
 }
 
-// Register ...
+// Register handles new user registration requests, validates input and creates a new user account
 func (ctrl UserController) Register(c *gin.Context) {
 	var registerForm forms.RegisterForm
 
@@ -62,7 +63,7 @@ func (ctrl UserController) Register(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "User registered successfully"})
 }
 
-// Logout ...
+// Logout handles user logout requests by invalidating the JWT token
 func (ctrl UserController) Logout(c *gin.Context) {
 
 	au, err := service.Auth.ExtractTokenMetadata(c.Request)
