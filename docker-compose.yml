@@ -1,3 +1,7 @@
+volumes:
+  mongodb-data-primary:
+  mongodb-data-secondary:
+
 services:
   backend:
     container_name: backend
@@ -10,8 +14,8 @@ services:
       - SSL=${SSL}
       - ACCESS_SECRET=${ACCESS_SECRET}
       - REFRESH_SECRET=${REFRESH_SECRET}
-      - DB_URI=mongodb://mongodb-primary:27017
-      - DB_NAME=${DB_NAME}
+      - DB_URI=mongodb://mongodb:27017
+      - DB_NAME=tinode
       - REDIS_HOST=valkey-primary:6379
       - REDIS_DB=0
       - REDIS_PASS=${REDIS_PASS}
@@ -34,12 +38,25 @@ services:
       retries: 3
       start_period: 10s
 
+  tinode:
+    image: tinode/tinode-mongodb:0.23
+    ports:
+      - "127.0.0.1:6060:6060"
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+      mongodb-secondary:
+        condition: service_healthy
+
   mongodb-primary:
     container_name: mongodb-primary
+    hostname: mongodb
     image: mongo:latest
     command: ["--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "127.0.0.1:27017:27017"
+    volumes:
+      - mongodb-data-primary:/data/db
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
@@ -53,6 +70,8 @@ services:
     command: ["--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "127.0.0.1:27018:27017"
+    volumes:
+      - mongodb-data-secondary:/data/db
     depends_on:
       mongodb-primary:
         condition: service_healthy
@@ -72,11 +91,11 @@ services:
       mongodb-secondary:
         condition: service_healthy
     command: >
-      mongosh --host mongodb-primary:27017 --eval
+      mongosh --host mongodb:27017 --eval
       'rs.initiate({
         _id: "rs0",
         members: [
-          {_id: 0, host: "mongodb-primary:27017"},
+          {_id: 0, host: "mongodb:27017"},
           {_id: 1, host: "mongodb-secondary:27017"}
         ]
       })'
@@ -87,7 +106,7 @@ services:
     ports:
       - "127.0.0.1:8081:8081"
     environment:
-      - ME_CONFIG_MONGODB_SERVER=mongodb-primary
+      - ME_CONFIG_MONGODB_SERVER=mongodb
       - ME_CONFIG_MONGODB_PORT=27017
     depends_on:
       mongodb-primary:
