@@ -32,15 +32,17 @@ services:
         condition: service_healthy
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
 
   tinode:
-    image: tinode/tinode-mongodb:0.23
+    container_name: tinode
+    image: tinode/tinode-mongodb:0.22.13
     ports:
+      - "127.0.0.1:16060:16060"
       - "127.0.0.1:6060:6060"
     depends_on:
       mongodb-primary:
