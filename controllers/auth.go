@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 
 	"github.com/dartt0n/realtime-chat-backend/forms"
 	"github.com/dartt0n/realtime-chat-backend/models"
+	"github.com/dartt0n/realtime-chat-backend/service"
 	"github.com/gin-gonic/gin"
 	jwt "github.com/golang-jwt/jwt/v4"
 )
@@ -15,19 +15,17 @@ import (
 // AuthController ...
 type AuthController struct{}
 
-var authModel = new(models.AuthModel)
-
 // TokenValid ...
 func (ctl AuthController) TokenValid(c *gin.Context) {
 
-	tokenAuth, err := authModel.ExtractTokenMetadata(c.Request)
+	tokenAuth, err := service.Auth.ExtractTokenMetadata(c.Request)
 	if err != nil {
 		//Token either expired or not valid
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "Please login first"})
 		return
 	}
 
-	userID, err := authModel.FetchAuth(tokenAuth)
+	userID, err := service.Auth.FetchAuth(tokenAuth)
 	if err != nil {
 		//Token does not exists in Redis (User logged out or expired)
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "Please login first"})
@@ -74,26 +72,29 @@ func (ctl AuthController) Refresh(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"message": "Invalid authorization, please login again"})
 			return
 		}
-		userID, err := strconv.ParseInt(fmt.Sprintf("%.f", claims["user_id"]), 10, 64)
+
+		userID, err := models.ParseUserID(claims["user_id"].(string))
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"message": "Invalid authorization, please login again"})
 			return
 		}
+
 		//Delete the previous Refresh Token
-		deleted, delErr := authModel.DeleteAuth(refreshUUID)
-		if delErr != nil || deleted == 0 { //if any goes wrong
+		_, delErr := service.Auth.DeleteAuth(refreshUUID)
+		if delErr != nil { //if any goes wrong
 			c.JSON(http.StatusUnauthorized, gin.H{"message": "Invalid authorization, please login again"})
 			return
 		}
 
 		//Create new pairs of refresh and access tokens
-		ts, createErr := authModel.CreateToken(userID)
+		ts, createErr := service.Auth.CreateToken(userID)
 		if createErr != nil {
 			c.JSON(http.StatusForbidden, gin.H{"message": "Invalid authorization, please login again"})
 			return
 		}
+
 		//save the tokens metadata to redis
-		saveErr := authModel.CreateAuth(userID, ts)
+		saveErr := service.Auth.CreateAuth(userID, ts)
 		if saveErr != nil {
 			c.JSON(http.StatusForbidden, gin.H{"message": "Invalid authorization, please login again"})
 			return

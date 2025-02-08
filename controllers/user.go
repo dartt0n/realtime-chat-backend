@@ -2,7 +2,7 @@ package controllers
 
 import (
 	"github.com/dartt0n/realtime-chat-backend/forms"
-	"github.com/dartt0n/realtime-chat-backend/models"
+	"github.com/dartt0n/realtime-chat-backend/service"
 
 	"net/http"
 
@@ -12,7 +12,6 @@ import (
 // UserController ...
 type UserController struct{}
 
-var userModel = new(models.UserModel)
 var userForm = new(forms.UserForm)
 
 // getUserID ...
@@ -31,7 +30,7 @@ func (ctrl UserController) Login(c *gin.Context) {
 		return
 	}
 
-	user, token, err := userModel.Login(loginForm)
+	user, token, err := service.User.Login(loginForm)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{"message": "Invalid login details"})
 		return
@@ -44,13 +43,13 @@ func (ctrl UserController) Login(c *gin.Context) {
 func (ctrl UserController) Register(c *gin.Context) {
 	var registerForm forms.RegisterForm
 
-	if validationErr := c.ShouldBindJSON(&registerForm); validationErr != nil {
-		message := userForm.Register(validationErr)
+	if err := c.ShouldBindJSON(&registerForm); err != nil {
+		message := userForm.Register(err)
 		c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{"message": message})
 		return
 	}
 
-	user, err := userModel.Register(registerForm)
+	user, err := service.User.Register(registerForm)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{"message": err.Error()})
 		return
@@ -62,14 +61,14 @@ func (ctrl UserController) Register(c *gin.Context) {
 // Logout ...
 func (ctrl UserController) Logout(c *gin.Context) {
 
-	au, err := authModel.ExtractTokenMetadata(c.Request)
+	au, err := service.Auth.ExtractTokenMetadata(c.Request)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": "User not logged in"})
 		return
 	}
 
-	deleted, delErr := authModel.DeleteAuth(au.AccessUUID)
-	if delErr != nil || deleted == 0 { //if any goes wrong
+	_, delErr := service.Auth.DeleteAuth(au.AccessUUID)
+	if delErr != nil { // if any goes wrong
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "Invalid request"})
 		return
 	}

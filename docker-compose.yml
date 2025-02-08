@@ -10,18 +10,23 @@ services:
       - SSL=${SSL}
       - ACCESS_SECRET=${ACCESS_SECRET}
       - REFRESH_SECRET=${REFRESH_SECRET}
+      - DB_URI=mongodb://mongodb-primary:27017
+      - DB_NAME=${DB_NAME}
+      - REDIS_HOST=valkey-primary:6379
+      - REDIS_DB=0
+      - REDIS_PASS=${REDIS_PASS}
     ports:
       - "127.0.0.1:8080:8080"
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+      mongodb-secondary:
+        condition: service_healthy
+      valkey-primary:
+        condition: service_healthy
+      valkey-secondary:
+        condition: service_healthy
 
-    # depends_on:
-    #   mongodb-primary:
-    #     condition: service_healthy
-    #   mongodb-secondary:
-    #     condition: service_healthy
-    #   redis-primary:
-    #     condition: service_healthy
-    #   redis-secondary:
-    #     condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health"]
       interval: 30s
@@ -94,29 +99,33 @@ services:
       retries: 3
       start_period: 10s
 
-  redis-primary:
-    container_name: redis-primary
-    image: redis:latest
+  valkey-primary:
+    container_name: valkey-primary
+    image: valkey/valkey:7.2-alpine
     ports:
       - "127.0.0.1:6379:6379"
-    command: redis-server --port 6379
+    command: valkey-server --port 6379 --requirepass ${REDIS_PASS}
+    environment:
+      - REDIS_PASS=${REDIS_PASS}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "-a", "${REDIS_PASS}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
 
-  redis-secondary:
-    container_name: redis-secondary
-    image: redis:latest
+  valkey-secondary:
+    container_name: valkey-secondary
+    image: valkey/valkey:7.2-alpine
     ports:
       - "127.0.0.1:6380:6379"
-    command: redis-server --port 6379 --replicaof redis-primary 6379
+    command: valkey-server --port 6379 --requirepass ${REDIS_PASS} --masterauth ${REDIS_PASS} --replicaof valkey-primary 6379
+    environment:
+      - REDIS_PASS=${REDIS_PASS}
     depends_on:
-      redis-primary:
+      valkey-primary:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "-a", "${REDIS_PASS}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3

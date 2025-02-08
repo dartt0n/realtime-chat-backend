@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/dartt0n/realtime-chat-backend/controllers"
 	"github.com/dartt0n/realtime-chat-backend/db"
 	"github.com/dartt0n/realtime-chat-backend/forms"
+	"github.com/dartt0n/realtime-chat-backend/kv"
 	"github.com/gin-contrib/gzip"
 	uuid "github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -55,6 +57,8 @@ func TokenAuthMiddleware() gin.HandlerFunc {
 }
 
 func main() {
+	var err error
+
 	//Load the .env file if it exists
 	if _, err := os.Stat(".env"); err == nil {
 		err := godotenv.Load(".env")
@@ -77,13 +81,19 @@ func main() {
 	r.Use(RequestIDMiddleware())
 	r.Use(gzip.Gzip(gzip.DefaultCompression))
 
-	//Start PostgreSQL database
-	//Example: db.GetDB() - More info in the models folder
-	db.Init()
+	err = db.InitMongo(os.Getenv("DB_URI"), os.Getenv("DB_NAME"))
+	if err != nil {
+		log.Fatal("failed to connect to database: ", err)
+	}
 
-	//Start Redis on database 1 - it's used to store the JWT but you can use it for anythig else
-	//Example: db.GetRedis().Set(KEY, VALUE, at.Sub(now)).Err()
-	db.InitRedis(1)
+	redisDb, err := strconv.ParseInt(os.Getenv("REDIS_DB"), 0, 0)
+	if err != nil {
+		log.Fatal("failed to parse REDIS_DB env variable: ", err)
+	}
+	err = kv.InitRedis(os.Getenv("REDIS_HOST"), os.Getenv("REDIS_PASS"), int(redisDb))
+	if err != nil {
+		log.Fatal("failed to connect to key-value store: ", err)
+	}
 
 	v1 := r.Group("/v1")
 	{
@@ -98,12 +108,6 @@ func main() {
 		auth := new(controllers.AuthController)
 		v1.POST("/token/refresh", auth.Refresh)
 	}
-
-	r.LoadHTMLGlob("./public/html/*")
-	r.Static("/public", "./public")
-	r.NoRoute(func(c *gin.Context) {
-		c.HTML(404, "404.html", gin.H{})
-	})
 
 	port := os.Getenv("PORT")
 
