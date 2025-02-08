@@ -1,0 +1,115 @@
+services:
+  backend:
+    container_name: backend
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+      mongodb-secondary:
+        condition: service_healthy
+      redis-primary:
+        condition: service_healthy
+      redis-secondary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  mongodb-primary:
+    container_name: mongodb-primary
+    image: mongo:latest
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27017:27017"
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  mongodb-secondary:
+    container_name: mongodb-secondary
+    image: mongo:latest
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27018:27017"
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  mongo-setup:
+    container_name: mongo-setup
+    image: mongo:latest
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+      mongodb-secondary:
+        condition: service_healthy
+    command: >
+      mongosh --host mongodb-primary:27017 --eval
+      'rs.initiate({
+        _id: "rs0",
+        members: [
+          {_id: 0, host: "mongodb-primary:27017"},
+          {_id: 1, host: "mongodb-secondary:27017"}
+        ]
+      })'
+
+  mongo-admin:
+    container_name: mongo-admin
+    image: mongo-express:latest
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb-primary
+      - ME_CONFIG_MONGODB_PORT=27017
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:8081 || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  redis-primary:
+    container_name: redis-primary
+    image: redis:latest
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: redis-server --port 6379
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  redis-secondary:
+    container_name: redis-secondary
+    image: redis:latest
+    ports:
+      - "127.0.0.1:6380:6379"
+    command: redis-server --port 6379 --replicaof redis-primary 6379
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
