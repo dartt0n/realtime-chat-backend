@@ -13,24 +13,26 @@ import (
 )
 
 // AuthController handles authentication related operations
-type AuthController struct{}
+type AuthController struct {
+	auth *service.AuthService
+}
 
 // NewAuthController creates and returns a new AuthController instance
-func NewAuthController() *AuthController {
-	return &AuthController{}
+func NewAuthController(auth *service.AuthService) *AuthController {
+	return &AuthController{auth: auth}
 }
 
 // TokenValid validates the authentication token from the request context
-func (ctl AuthController) TokenValid(c *gin.Context) {
+func (ctrl AuthController) TokenValid(c *gin.Context) {
 
-	tokenAuth, err := service.Auth.ExtractTokenMetadata(c.Request)
+	tokenAuth, err := ctrl.auth.ExtractTokenMetadata(c.Request)
 	if err != nil {
 		// Token either expired or not valid
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "Please login first"})
 		return
 	}
 
-	userID, err := service.Auth.FetchAuth(tokenAuth)
+	userID, err := ctrl.auth.FetchAuth(tokenAuth)
 	if err != nil {
 		// Token does not exists in Redis (User logged out or expired)
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "Please login first"})
@@ -43,7 +45,7 @@ func (ctl AuthController) TokenValid(c *gin.Context) {
 
 // Refresh handles the token refresh operation by validating the refresh token
 // and generating new access and refresh token pairs
-func (ctl AuthController) Refresh(c *gin.Context) {
+func (ctrl AuthController) Refresh(c *gin.Context) {
 	var tokenForm forms.Token
 
 	if c.ShouldBindJSON(&tokenForm) != nil {
@@ -86,21 +88,21 @@ func (ctl AuthController) Refresh(c *gin.Context) {
 		}
 
 		// Delete the previous Refresh Token
-		_, delErr := service.Auth.DeleteAuth(refreshUUID)
+		_, delErr := ctrl.auth.DeleteAuth(refreshUUID)
 		if delErr != nil { // if any goes wrong
 			c.JSON(http.StatusUnauthorized, gin.H{"message": "Invalid authorization, please login again"})
 			return
 		}
 
 		// Create new pairs of refresh and access tokens
-		ts, createErr := service.Auth.CreateToken(userID)
+		ts, createErr := ctrl.auth.CreateToken(userID)
 		if createErr != nil {
 			c.JSON(http.StatusForbidden, gin.H{"message": "Invalid authorization, please login again"})
 			return
 		}
 
 		// save the tokens metadata to redis
-		saveErr := service.Auth.CreateAuth(userID, ts)
+		saveErr := ctrl.auth.CreateAuth(userID, ts)
 		if saveErr != nil {
 			c.JSON(http.StatusForbidden, gin.H{"message": "Invalid authorization, please login again"})
 			return

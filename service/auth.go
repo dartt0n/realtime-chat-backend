@@ -14,11 +14,17 @@ import (
 	"github.com/google/uuid"
 )
 
-type authService struct{}
+type AuthService struct {
+	kv kv.KeyValueStore
+}
 
-var Auth = new(authService)
+func NewAuthService(kv kv.KeyValueStore) *AuthService {
+	return &AuthService{
+		kv: kv,
+	}
+}
 
-func (s authService) CreateToken(userID models.UserID) (*models.TokenDetails, error) {
+func (s AuthService) CreateToken(userID models.UserID) (*models.TokenDetails, error) {
 	td := &models.TokenDetails{}
 	td.AtExpires = time.Now().Add(time.Minute * 15).Unix() // 15 minutes
 	td.AccessUUID = uuid.New().String()
@@ -54,17 +60,17 @@ func (s authService) CreateToken(userID models.UserID) (*models.TokenDetails, er
 }
 
 // CreateAuth ...
-func (s authService) CreateAuth(userID models.UserID, td *models.TokenDetails) (err error) {
+func (s AuthService) CreateAuth(userID models.UserID, td *models.TokenDetails) (err error) {
 	at := time.Unix(td.AtExpires, 0) //converting Unix to UTC(to Time object)
 	rt := time.Unix(td.RtExpires, 0)
 	now := time.Now()
 
-	err = kv.GetKV().Set(td.AccessUUID, userID.String(), at.Sub(now))
+	err = s.kv.Set(td.AccessUUID, userID.String(), at.Sub(now))
 	if err != nil {
 		return err
 	}
 
-	err = kv.GetKV().Set(td.RefreshUUID, userID.String(), rt.Sub(now))
+	err = s.kv.Set(td.RefreshUUID, userID.String(), rt.Sub(now))
 	if err != nil {
 		return err
 	}
@@ -72,7 +78,7 @@ func (s authService) CreateAuth(userID models.UserID, td *models.TokenDetails) (
 }
 
 // ExtractToken ...
-func (s authService) ExtractToken(r *http.Request) string {
+func (s AuthService) ExtractToken(r *http.Request) string {
 	bearToken := r.Header.Get("Authorization")
 	//normally Authorization the_token_xxx
 	strArr := strings.Split(bearToken, " ")
@@ -83,7 +89,7 @@ func (s authService) ExtractToken(r *http.Request) string {
 }
 
 // VerifyToken ...
-func (s authService) VerifyToken(r *http.Request) (*jwt.Token, error) {
+func (s AuthService) VerifyToken(r *http.Request) (*jwt.Token, error) {
 	tokenString := s.ExtractToken(r)
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		//Make sure that the token method conform to "SigningMethodHMAC"
@@ -99,7 +105,7 @@ func (s authService) VerifyToken(r *http.Request) (*jwt.Token, error) {
 }
 
 // TokenValid ...
-func (s authService) TokenValid(r *http.Request) error {
+func (s AuthService) TokenValid(r *http.Request) error {
 	token, err := s.VerifyToken(r)
 	if err != nil {
 		return err
@@ -111,7 +117,7 @@ func (s authService) TokenValid(r *http.Request) error {
 }
 
 // ExtractTokenMetadata ...
-func (s authService) ExtractTokenMetadata(r *http.Request) (*models.AccessDetails, error) {
+func (s AuthService) ExtractTokenMetadata(r *http.Request) (*models.AccessDetails, error) {
 	token, err := s.VerifyToken(r)
 	if err != nil {
 		return nil, err
@@ -135,8 +141,8 @@ func (s authService) ExtractTokenMetadata(r *http.Request) (*models.AccessDetail
 }
 
 // FetchAuth ...
-func (s authService) FetchAuth(authD *models.AccessDetails) (userID models.UserID, err error) {
-	rawID, err := kv.GetKV().Get(authD.AccessUUID)
+func (s AuthService) FetchAuth(authD *models.AccessDetails) (userID models.UserID, err error) {
+	rawID, err := s.kv.Get(authD.AccessUUID)
 	if err != nil {
 		return userID, err
 	}
@@ -150,8 +156,8 @@ func (s authService) FetchAuth(authD *models.AccessDetails) (userID models.UserI
 }
 
 // DeleteAuth ...
-func (s authService) DeleteAuth(authUUID string) (userID models.UserID, err error) {
-	rawID, err := kv.GetKV().Del(authUUID)
+func (s AuthService) DeleteAuth(authUUID string) (userID models.UserID, err error) {
+	rawID, err := s.kv.Del(authUUID)
 	if err != nil {
 		return userID, err
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/dartt0n/realtime-chat-backend/db"
 	"github.com/dartt0n/realtime-chat-backend/forms"
 	"github.com/dartt0n/realtime-chat-backend/kv"
+	"github.com/dartt0n/realtime-chat-backend/service"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-contrib/requestid"
 	"github.com/joho/godotenv"
@@ -99,7 +100,7 @@ func main() {
 	r.Use(SlogMiddleware(logger))
 	r.Use(gzip.Gzip(gzip.DefaultCompression))
 
-	err = db.InitMongo(os.Getenv("DB_URI"), os.Getenv("DB_NAME"))
+	mongoDB, err := db.NewMongoDB(os.Getenv("DB_URI"), os.Getenv("DB_NAME"))
 	if err != nil {
 		slog.Error("failed to connect to database", "error", err)
 		os.Exit(1)
@@ -110,21 +111,24 @@ func main() {
 		slog.Error("failed to parse REDIS_DB env variable", "error", err)
 		os.Exit(1)
 	}
-	err = kv.InitRedis(os.Getenv("REDIS_HOST"), os.Getenv("REDIS_PASS"), int(redisDb))
+	redisKV, err := kv.NewRedisKV(os.Getenv("REDIS_HOST"), os.Getenv("REDIS_PASS"), int(redisDb))
 	if err != nil {
 		slog.Error("failed to connect to key-value store", "error", err)
 		os.Exit(1)
 	}
 
+	authService := service.NewAuthService(redisKV)
+	userService := service.NewUserService(redisKV, mongoDB, authService)
+
 	health := controllers.NewHealthController()
 	r.GET("/health", health.Health)
 
-	user := controllers.NewUserController()
+	user := controllers.NewUserController(userService, authService)
 	r.POST("/signup", user.Register)
 	r.POST("/login", user.Login)
 	r.GET("/logout", user.Logout)
 
-	auth := controllers.NewAuthController()
+	auth := controllers.NewAuthController(authService)
 	r.POST("/refresh", auth.Refresh)
 
 	port := os.Getenv("PORT")

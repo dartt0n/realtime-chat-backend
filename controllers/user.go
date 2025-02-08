@@ -10,11 +10,14 @@ import (
 )
 
 // UserController handles user-related HTTP requests and responses
-type UserController struct{}
+type UserController struct {
+	user *service.UserService
+	auth *service.AuthService
+}
 
 // NewUserController creates and returns a new UserController instance
-func NewUserController() *UserController {
-	return &UserController{}
+func NewUserController(user *service.UserService, auth *service.AuthService) *UserController {
+	return &UserController{user: user, auth: auth}
 }
 
 var userForm = new(forms.UserForm)
@@ -35,7 +38,7 @@ func (ctrl UserController) Login(c *gin.Context) {
 		return
 	}
 
-	_, token, err := service.User.Login(loginForm)
+	_, token, err := ctrl.user.Login(loginForm)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{"message": "Invalid login details"})
 		return
@@ -54,7 +57,7 @@ func (ctrl UserController) Register(c *gin.Context) {
 		return
 	}
 
-	_, err := service.User.Register(registerForm)
+	_, err := ctrl.user.Register(registerForm)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{"message": err.Error()})
 		return
@@ -66,13 +69,13 @@ func (ctrl UserController) Register(c *gin.Context) {
 // Logout handles user logout requests by invalidating the JWT token
 func (ctrl UserController) Logout(c *gin.Context) {
 
-	au, err := service.Auth.ExtractTokenMetadata(c.Request)
+	au, err := ctrl.auth.ExtractTokenMetadata(c.Request)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": "User not logged in"})
 		return
 	}
 
-	_, delErr := service.Auth.DeleteAuth(au.AccessUUID)
+	_, delErr := ctrl.auth.DeleteAuth(au.AccessUUID)
 	if delErr != nil { // if any goes wrong
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "Invalid request"})
 		return

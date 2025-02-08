@@ -12,10 +12,3 @@ type KeyValueStore interface {
 	// Del removes the key-value pair and returns the deleted key
 	Del(key string) (string, error)
 }
-
-var _globalKV KeyValueStore
-
-// GetKV returns the global KeyValueStore instance
-func GetKV() KeyValueStore {
-	return _globalKV
-}

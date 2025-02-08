@@ -12,12 +12,6 @@ type Database interface {
 	CreateUser(user CreateUser) (models.User, error)
 }
 
-var _globalDB Database
-
-func GetDB() Database {
-	return _globalDB
-}
-
 type CreateUser struct {
 	Email   string
 	PwdHash string

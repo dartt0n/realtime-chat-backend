@@ -25,14 +25,13 @@ type MongoDB struct {
 	db     string
 }
 
-func InitMongo(conn string, db string) error {
+func NewMongoDB(conn string, db string) (*MongoDB, error) {
 	client, err := mongo.Connect(options.Client().ApplyURI(conn))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	_globalDB = &MongoDB{client: client, db: db}
-	return nil
+	return &MongoDB{client: client, db: db}, nil
 }
 
 func (m *MongoDB) CreateUser(user CreateUser) (models.User, error) {
