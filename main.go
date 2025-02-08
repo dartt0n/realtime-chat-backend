@@ -2,16 +2,17 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/dartt0n/realtime-chat-backend/controllers"
 	"github.com/dartt0n/realtime-chat-backend/db"
 	"github.com/dartt0n/realtime-chat-backend/forms"
 	"github.com/dartt0n/realtime-chat-backend/kv"
 	"github.com/gin-contrib/gzip"
-	uuid "github.com/google/uuid"
+	"github.com/gin-contrib/requestid"
 	"github.com/joho/godotenv"
 
 	"github.com/gin-gonic/gin"
@@ -37,12 +38,20 @@ func CORSMiddleware() gin.HandlerFunc {
 	}
 }
 
-// Generate a unique ID and attach it to each request for future reference or use
-func RequestIDMiddleware() gin.HandlerFunc {
+func SlogMiddleware(logger *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		uuid := uuid.New()
-		c.Writer.Header().Set("X-Request-Id", uuid.String())
+		rlog := logger.With(
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"client_ip", c.ClientIP(),
+			"request_id", requestid.Get(c),
+		)
+
+		start := time.Now()
+		rlog.Debug("request started")
 		c.Next()
+		duration := time.Since(start)
+		rlog.Info("request completed", "status", c.Writer.Status(), "duration", duration)
 	}
 }
 
@@ -63,13 +72,21 @@ func main() {
 	if _, err := os.Stat(".env"); err == nil {
 		err := godotenv.Load(".env")
 		if err != nil {
-			log.Fatal("error: failed to load the env file")
+			slog.Error("failed to load the env file")
+			os.Exit(1)
 		}
 	}
 
+	var logger *slog.Logger
 	if os.Getenv("ENV") == "PRODUCTION" {
 		gin.SetMode(gin.ReleaseMode)
+		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	} else {
+		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		}))
 	}
+	slog.SetDefault(logger)
 
 	//Start the default gin server
 	r := gin.Default()
@@ -78,40 +95,41 @@ func main() {
 	binding.Validator = new(forms.DefaultValidator)
 
 	r.Use(CORSMiddleware())
-	r.Use(RequestIDMiddleware())
+	r.Use(requestid.New(requestid.WithCustomHeaderStrKey("X-Request-Id")))
+	r.Use(SlogMiddleware(logger))
 	r.Use(gzip.Gzip(gzip.DefaultCompression))
 
 	err = db.InitMongo(os.Getenv("DB_URI"), os.Getenv("DB_NAME"))
 	if err != nil {
-		log.Fatal("failed to connect to database: ", err)
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
 	}
 
 	redisDb, err := strconv.ParseInt(os.Getenv("REDIS_DB"), 0, 0)
 	if err != nil {
-		log.Fatal("failed to parse REDIS_DB env variable: ", err)
+		slog.Error("failed to parse REDIS_DB env variable", "error", err)
+		os.Exit(1)
 	}
 	err = kv.InitRedis(os.Getenv("REDIS_HOST"), os.Getenv("REDIS_PASS"), int(redisDb))
 	if err != nil {
-		log.Fatal("failed to connect to key-value store: ", err)
+		slog.Error("failed to connect to key-value store", "error", err)
+		os.Exit(1)
 	}
 
-	v1 := r.Group("/v1")
-	{
-		health := new(controllers.HealthController)
-		v1.GET("/health", health.Health)
+	health := controllers.NewHealthController()
+	r.GET("/health", health.Health)
 
-		user := new(controllers.UserController)
-		v1.POST("/user/login", user.Login)
-		v1.POST("/user/signup", user.Register)
-		v1.GET("/user/logout", user.Logout)
+	user := controllers.NewUserController()
+	r.POST("/signup", user.Register)
+	r.POST("/login", user.Login)
+	r.GET("/logout", user.Logout)
 
-		auth := new(controllers.AuthController)
-		v1.POST("/token/refresh", auth.Refresh)
-	}
+	auth := controllers.NewAuthController()
+	r.POST("/refresh", auth.Refresh)
 
 	port := os.Getenv("PORT")
 
-	log.Printf("PORT: %s; ENV: %s; SSL: %s", port, os.Getenv("ENV"), os.Getenv("SSL"))
+	slog.Info("server starting", "port", port, "env", os.Getenv("ENV"), "ssl", os.Getenv("SSL"))
 
 	if os.Getenv("SSL") == "TRUE" {
 

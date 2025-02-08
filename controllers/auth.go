@@ -15,6 +15,10 @@ import (
 // AuthController ...
 type AuthController struct{}
 
+func NewAuthController() *AuthController {
+	return &AuthController{}
+}
+
 // TokenValid ...
 func (ctl AuthController) TokenValid(c *gin.Context) {
 

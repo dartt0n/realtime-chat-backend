@@ -12,6 +12,10 @@ import (
 // UserController ...
 type UserController struct{}
 
+func NewUserController() *UserController {
+	return &UserController{}
+}
+
 var userForm = new(forms.UserForm)
 
 // getUserID ...
@@ -30,13 +34,13 @@ func (ctrl UserController) Login(c *gin.Context) {
 		return
 	}
 
-	user, token, err := service.User.Login(loginForm)
+	_, token, err := service.User.Login(loginForm)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{"message": "Invalid login details"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Successfully logged in", "user": user, "token": token})
+	c.JSON(http.StatusOK, gin.H{"token": token})
 }
 
 // Register ...
@@ -49,13 +53,13 @@ func (ctrl UserController) Register(c *gin.Context) {
 		return
 	}
 
-	user, err := service.User.Register(registerForm)
+	_, err := service.User.Register(registerForm)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{"message": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Successfully registered", "user": user})
+	c.JSON(http.StatusOK, gin.H{"message": "User registered successfully"})
 }
 
 // Logout ...
