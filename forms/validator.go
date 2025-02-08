@@ -2,15 +2,13 @@ package forms
 
 import (
 	"reflect"
-	"regexp"
-	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
 )
 
-//DefaultValidator ...
+// DefaultValidator ...
 type DefaultValidator struct {
 	once     sync.Once
 	validate *validator.Validate
@@ -18,7 +16,7 @@ type DefaultValidator struct {
 
 var _ binding.StructValidator = &DefaultValidator{}
 
-//ValidateStruct ...
+// ValidateStruct ...
 func (v *DefaultValidator) ValidateStruct(obj interface{}) error {
 
 	if kindOfData(obj) == reflect.Struct {
@@ -33,7 +31,7 @@ func (v *DefaultValidator) ValidateStruct(obj interface{}) error {
 	return nil
 }
 
-//Engine ...
+// Engine ...
 func (v *DefaultValidator) Engine() interface{} {
 	v.lazyinit()
 	return v.validate
@@ -47,8 +45,6 @@ func (v *DefaultValidator) lazyinit() {
 
 		// add any custom validations etc. here
 
-		//Custom rule for user full name
-		v.validate.RegisterValidation("fullName", ValidateFullName)
 	})
 }
 
@@ -61,18 +57,4 @@ func kindOfData(data interface{}) reflect.Kind {
 		valueType = value.Elem().Kind()
 	}
 	return valueType
-}
-
-//ValidateFullName implements validator.Func
-func ValidateFullName(fl validator.FieldLevel) bool {
-	//Remove the extra space
-	space := regexp.MustCompile(`\s+`)
-	name := space.ReplaceAllString(fl.Field().String(), " ")
-
-	//Remove trailing spaces
-	name = strings.TrimSpace(name)
-
-	//To support all possible languages
-	matched, _ := regexp.Match(`^[^±!@£$%^&*_+§¡€#¢§¶•ªº«\\/<>?:;'"|=.,0123456789]{3,20}$`, []byte(name))
-	return matched
 }

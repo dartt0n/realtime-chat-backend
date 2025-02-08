@@ -3,9 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"os"
-	"runtime"
 
 	"github.com/dartt0n/realtime-chat-backend/controllers"
 	"github.com/dartt0n/realtime-chat-backend/db"
@@ -18,7 +16,6 @@ import (
 	"github.com/gin-gonic/gin/binding"
 )
 
-// CORSMiddleware ...
 // CORS (Cross-Origin Resource Sharing)
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -38,7 +35,6 @@ func CORSMiddleware() gin.HandlerFunc {
 	}
 }
 
-// RequestIDMiddleware ...
 // Generate a unique ID and attach it to each request for future reference or use
 func RequestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -50,7 +46,6 @@ func RequestIDMiddleware() gin.HandlerFunc {
 
 var auth = new(controllers.AuthController)
 
-// TokenAuthMiddleware ...
 // JWT Authentication middleware attached to each request that needs to be authenitcated to validate the access_token in the header
 func TokenAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -60,10 +55,12 @@ func TokenAuthMiddleware() gin.HandlerFunc {
 }
 
 func main() {
-	//Load the .env file
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatal("error: failed to load the env file")
+	//Load the .env file if it exists
+	if _, err := os.Stat(".env"); err == nil {
+		err := godotenv.Load(".env")
+		if err != nil {
+			log.Fatal("error: failed to load the env file")
+		}
 	}
 
 	if os.Getenv("ENV") == "PRODUCTION" {
@@ -90,47 +87,27 @@ func main() {
 
 	v1 := r.Group("/v1")
 	{
-		/*** START USER ***/
-		user := new(controllers.UserController)
+		health := new(controllers.HealthController)
+		v1.GET("/health", health.Health)
 
+		user := new(controllers.UserController)
 		v1.POST("/user/login", user.Login)
-		v1.POST("/user/register", user.Register)
+		v1.POST("/user/signup", user.Register)
 		v1.GET("/user/logout", user.Logout)
 
-		/*** START AUTH ***/
 		auth := new(controllers.AuthController)
-
-		//Refresh the token when needed to generate new access_token and refresh_token for the user
 		v1.POST("/token/refresh", auth.Refresh)
-
-		/*** START Article ***/
-		article := new(controllers.ArticleController)
-
-		v1.POST("/article", TokenAuthMiddleware(), article.Create)
-		v1.GET("/articles", TokenAuthMiddleware(), article.All)
-		v1.GET("/article/:id", TokenAuthMiddleware(), article.One)
-		v1.PUT("/article/:id", TokenAuthMiddleware(), article.Update)
-		v1.DELETE("/article/:id", TokenAuthMiddleware(), article.Delete)
 	}
 
 	r.LoadHTMLGlob("./public/html/*")
-
 	r.Static("/public", "./public")
-
-	r.GET("/", func(c *gin.Context) {
-		c.HTML(http.StatusOK, "index.html", gin.H{
-			"ginBoilerplateVersion": "v0.03",
-			"goVersion":             runtime.Version(),
-		})
-	})
-
 	r.NoRoute(func(c *gin.Context) {
 		c.HTML(404, "404.html", gin.H{})
 	})
 
 	port := os.Getenv("PORT")
 
-	log.Printf("\n\n PORT: %s \n ENV: %s \n SSL: %s \n Version: %s \n\n", port, os.Getenv("ENV"), os.Getenv("SSL"), os.Getenv("API_VERSION"))
+	log.Printf("PORT: %s; ENV: %s; SSL: %s", port, os.Getenv("ENV"), os.Getenv("SSL"))
 
 	if os.Getenv("SSL") == "TRUE" {
 

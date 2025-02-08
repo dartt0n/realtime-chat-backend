@@ -1,0 +1,10 @@
+.git
+.github
+tests
+.dockerignore
+.env
+.gitignore
+example.env
+generate-certificate.sh
+docker-compose.yml
+README.md

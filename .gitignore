@@ -13,4 +13,4 @@
 cert/
 
 # BUILD #
-./realtime-chat-backend
+realtime-chat-backend

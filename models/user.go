@@ -79,12 +79,11 @@ func (m UserModel) Register(form forms.RegisterForm) (user User, err error) {
 	}
 
 	//Create the user and return back the user ID
-	err = getDb.QueryRow("INSERT INTO public.user(email, password, name) VALUES($1, $2, $3) RETURNING id", form.Email, string(hashedPassword), form.Name).Scan(&user.ID)
+	err = getDb.QueryRow("INSERT INTO public.user(email, password) VALUES($1, $2) RETURNING id", form.Email, string(hashedPassword)).Scan(&user.ID)
 	if err != nil {
 		return user, errors.New("something went wrong, please try again later")
 	}
 
-	user.Name = form.Name
 	user.Email = form.Email
 
 	return user, err

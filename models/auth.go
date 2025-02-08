@@ -42,10 +42,10 @@ type AuthModel struct{}
 func (m AuthModel) CreateToken(userID int64) (*TokenDetails, error) {
 
 	td := &TokenDetails{}
-	td.AtExpires = time.Now().Add(time.Minute * 15).Unix()
+	td.AtExpires = time.Now().Add(time.Minute * 15).Unix() // 15 minutes
 	td.AccessUUID = uuid.New().String()
 
-	td.RtExpires = time.Now().Add(time.Hour * 24 * 7).Unix()
+	td.RtExpires = time.Now().Add(time.Hour * 24 * 3).Unix() // 3 days
 	td.RefreshUUID = uuid.New().String()
 
 	var err error
@@ -61,6 +61,7 @@ func (m AuthModel) CreateToken(userID int64) (*TokenDetails, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	//Creating Refresh Token
 	rtClaims := jwt.MapClaims{}
 	rtClaims["refresh_uuid"] = td.RefreshUUID
