@@ -12,6 +12,7 @@
     - [System Components \& Their Roles](#system-components--their-roles)
     - [Setup Process](#setup-process)
     - [Data Flow](#data-flow)
+  - [Project Structure](#project-structure)
   - [Future Work](#future-work)
 
 
@@ -167,6 +168,53 @@ User -> JWT -> Backend -> Valkey -> Tinode Token -> Message Delivery
 ```
 
 All services are containerized and configured for high availability with health checks and proper dependency management through `Docker Compose`.
+
+## Project Structure
+
+The project follows a standard Go project layout with separate directories for different concerns:
+- `controllers/`: Contains HTTP handlers for different endpoints
+- `forms/`: Request validation and data structures
+- `kv/`: Key-value storage implementations
+- `models/`: Data models and structures
+- `service/`: Business logic implementation
+- `tests/`: Test scripts for various functionalities
+
+
+```
+.
+├── Dockerfile              # Docker configuration for containerization
+├── README.md               # Project documentation
+├── controllers/            # HTTP request handlers
+│   ├── auth.go             # Authentication related handlers
+│   ├── health.go           # Health check endpoints
+│   ├── message.go          # Message handling endpoints
+│   └── user.go             # User management endpoints
+├── docker-compose.yml      # Docker compose configuration
+├── example.env             # Example environment variables
+├── forms/                  # Request validation and data structures
+│   ├── auth.go             # Authentication request schemas
+│   ├── message.go          # Message request schemas
+│   ├── user.go             # User request schemas
+│   └── validator.go        # Form validation utilities
+├── generate-certificate.sh # SSL certificate generation script
+├── kv/                     # Key-Value storage implementations
+│   ├── kv.go               # KV interface definition
+│   └── redis.go            # Redis implementation
+├── main.go                 # Application entry point
+├── models/                 # Data models
+│   ├── auth.go             # Authentication models
+│   ├── message.go          # Message models
+│   ├── topic.go            # Topic models
+│   └── user.go             # User models
+├── service/                # Business logic layer
+│   ├── auth.go             # Authentication services
+│   └── tinode.go           # Tinode integration service
+└── tests/                  # Test scripts
+    ├── last_msgs.bash      # Test for retrieving last messages
+    ├── login.bash          # Test for login functionality
+    ├── new_msg.bash        # Test for new message creation
+    └── register.bash       # Test for user registration
+```
 
 ## Future Work
 
