@@ -20,16 +20,22 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// TinodeService handles communication with the Tinode chat server
+// It manages user authentication, message passing and server updates
 type TinodeService struct {
-	kv     kv.KeyValueStore
-	client pbx.NodeClient
-	stream pbx.Node_MessageLoopClient
+	kv     kv.KeyValueStore           // Key-value store for persistent data
+	client pbx.NodeClient             // gRPC client for Tinode server
+	stream pbx.Node_MessageLoopClient // Bi-directional message stream
 
 	auth *AuthService
 
-	reqres *sync.Map // chan any
+	reqres *sync.Map // Maps request IDs to response channels
 }
 
+// NewTinodeService creates a new TinodeService instance
+// addr: Tinode server address (e.g. "localhost:6061")
+// kv: Key-value store implementation
+// auth: Authentication service instance
 func NewTinodeService(addr string, kv kv.KeyValueStore, auth *AuthService) (*TinodeService, error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -47,12 +53,12 @@ func NewTinodeService(addr string, kv kv.KeyValueStore, auth *AuthService) (*Tin
 		client: client,
 		stream: stream,
 		auth:   auth,
-
 		reqres: &sync.Map{},
 	}
 
 	go t.ListenUpdates()
 
+	// Send initial handshake message
 	rID := uuid.NewString()
 	if _, err := t.Send(rID, &pbx.ClientMsg{Message: &pbx.ClientMsg_Hi{
 		Hi: &pbx.ClientHi{
@@ -68,6 +74,9 @@ func NewTinodeService(addr string, kv kv.KeyValueStore, auth *AuthService) (*Tin
 	return t, nil
 }
 
+// ListenUpdates handles incoming messages from the Tinode server
+// It processes different types of messages (control, data, presence etc.)
+// and routes responses to the appropriate request handlers
 func (s TinodeService) ListenUpdates() {
 	for {
 		msg, err := s.stream.Recv()
@@ -80,6 +89,7 @@ func (s TinodeService) ListenUpdates() {
 		case *pbx.ServerMsg_Ctrl:
 			slog.Info("received control message", "code", m.Ctrl.Code, "msg", m.Ctrl.Text)
 
+			// Route control message to waiting request handler if one exists
 			if ch, ok := s.reqres.Load(m.Ctrl.Id); ok {
 				ch.(chan any) <- m
 			} else {
@@ -99,6 +109,7 @@ func (s TinodeService) ListenUpdates() {
 	}
 }
 
+// declareReq creates a new response channel for a request ID
 func (s TinodeService) declareReq(rID string) error {
 	if _, ok := s.reqres.Load(rID); ok {
 		return errors.New("dublicate request id")
@@ -109,6 +120,7 @@ func (s TinodeService) declareReq(rID string) error {
 	return nil
 }
 
+// revokeReq removes a response channel for a request ID
 func (s TinodeService) revokeReq(rID string) error {
 	ch, ok := s.reqres.LoadAndDelete(rID)
 	if !ok {
@@ -119,6 +131,10 @@ func (s TinodeService) revokeReq(rID string) error {
 	return nil
 }
 
+// Send transmits a message to the Tinode server and waits for a response
+// rID: Request ID for tracking the response
+// msg: Message to send
+// Returns the server response and any error
 func (s TinodeService) Send(rID string, msg *pbx.ClientMsg) (res any, err error) {
 	err = s.declareReq(rID)
 	if err != nil {
@@ -145,13 +161,19 @@ func (s TinodeService) Send(rID string, msg *pbx.ClientMsg) (res any, err error)
 		return res, errors.New("internal error")
 	}
 
-	// await for res from event loop
+	// Wait for response from event loop
 	res = <-ch.(chan any)
 	slog.Debug("received response", "res", res)
 
 	return res, nil
 }
 
+// generateUsername creates a unique username from an email address
+// Format: localpart_pr_hash where:
+// - localpart is the part before @ in email
+// - pr is first 2 chars of provider name
+// - hash is first 8 chars of MD5 hash of full email
+// Example: john_gm_5d41402a for john@gmail.com
 func generateUsername(email string) string {
 	email = strings.ToLower(strings.Trim(email, " \n\r\t"))
 
@@ -163,6 +185,9 @@ func generateUsername(email string) string {
 	return prefix + "_" + provider + "_" + shorthash
 }
 
+// CreateUser registers a new user with the Tinode server
+// form: Registration form containing email and password
+// Returns the created user model and any error
 func (s TinodeService) CreateUser(form forms.RegisterForm) (user models.User, err error) {
 	rID := uuid.NewString()
 	username := generateUsername(form.Email)
@@ -201,7 +226,6 @@ func (s TinodeService) CreateUser(form forms.RegisterForm) (user models.User, er
 	}}
 	slog.Debug("sending account registration message", "id", rID, "msg", req)
 
-	// await for res from event loop
 	rawres, err := s.Send(rID, req)
 	if err != nil {
 		slog.Error("failed to send account registration message", "error", err, "id", rID)
@@ -226,6 +250,9 @@ func (s TinodeService) CreateUser(form forms.RegisterForm) (user models.User, er
 	return user, nil
 }
 
+// Login authenticates a user with the Tinode server
+// form: Login form containing email and password
+// Returns the user model, authentication tokens and any error
 func (s TinodeService) Login(form forms.LoginForm) (user models.User, token models.Token, err error) {
 	rID := uuid.NewString()
 	username := generateUsername(form.Email)
@@ -238,7 +265,6 @@ func (s TinodeService) Login(form forms.LoginForm) (user models.User, token mode
 		},
 	}}
 
-	// await for res from event loop
 	rawres, err := s.Send(rID, req)
 	if err != nil {
 		slog.Error("failed to send login message", "error", err, "id", rID)
