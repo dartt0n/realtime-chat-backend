@@ -18,14 +18,17 @@
 ![image](.github/assets/demo.png)
 
 ## Overview
-This project implements a real-time chat backend service using Go programming language and Tinode as the messaging platofrm. It provides a secure and scalable solution for user authentication and real-time message exchange in a single chat room environment.
+This project implements a real-time chat backend service using Go programming language and Tinode as the messaging platform. It provides a secure and scalable solution for user authentication and real-time message exchange in a single chat room environment.
 
 ![schema](.github/assets/schema.png)
 Users communicate with the server through a HTTP API. Authorization is done using JWT, which includes a user_id and an access_id. The server communicates with the Valkey cluster, exchanging the access_id for a tinode_token. The server then communicates with the Tinode server using a bidirectional gRPC stream. The server connects to the MongoDB cluster in readonly mode, while the Tinode server has read-write access.
 
 
 Since Tinode is in its early stages of development, the API is unstable, and there are some bugs, integrating with Tinode was the main challenge. Initially, I thought about implementing an in-house user management service and using Tinode only as an instant messaging platform. However, this approach had limitations due to the lack of mobility in terms of integrations with Tinode (only a non-persistent event loop was available — not an event queue) and other technology-dependent limitations.
-Another approach was to build a RESTRPS server as a plugin for Tinode and integrate it as an identity provider. However, this way the server would not be able to send messages from the user's account and would not meet the required HTTP API protocol.
+
+
+Another approach was to build a REST RPC server as a plugin for Tinode and integrate it as an identity provider. However, this way the server would not be able to send messages from the user's account and would not meet the required HTTP API protocol.
+
 After further investigation and system design, I decided to fully utilize Tinode and build my solution around it and its user/message management system. One of the challenges was demultiplexing events along independent listeners (multiple requests to Tinode may occur, and responses would come back as {ctrl} events out of order). This challenge was solved by creating temporary (in-memory) named channels for each request and passing responses from Tinode from the listening goroutine to the actor goroutine via the channel.
 
 Another challenge was the unstable Tinode registration API and the lack of support for email as user names. To solve this, I implemented a consistent username generator, which works like this: john@gmail.com -> john_gm_5d41402a (credentials part + 2 characters of domain + 8 character md5 hashsum suffix)
@@ -51,7 +54,7 @@ Another challenge is that Tinode uses authorization per stream, not per request.
 ### Authentication Flow
 1. Users authenticate via HTTP API
 2. Server issues JWT containing user_id and access_id
-3. Servier issues Tinode token for platform access
+3. Server issues Tinode token for platform access
 4. Server stores JWT access_id and token in Valkey cluster
 4. Tinode server validates tokens for message operations
 
