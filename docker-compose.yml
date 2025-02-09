@@ -1,0 +1,156 @@
+volumes:
+  mongodb-data-primary:
+  mongodb-data-secondary:
+
+services:
+  backend:
+    container_name: backend
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - PORT=8080
+      - ENV=${ENV}
+      - SSL=${SSL}
+      - ACCESS_SECRET=${ACCESS_SECRET}
+      - REFRESH_SECRET=${REFRESH_SECRET}
+      - DB_URI=mongodb://mongodb:27017
+      - DB_NAME=tinode
+      - REDIS_HOST=valkey-primary:6379
+      - REDIS_DB=0
+      - REDIS_PASS=${REDIS_PASS}
+      - TINODE_ADDR=tinode:16060
+      - TINODE_TOPIC_ID=${TINODE_TOPIC_ID}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+      mongodb-secondary:
+        condition: service_healthy
+      valkey-primary:
+        condition: service_healthy
+      valkey-secondary:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  tinode:
+    container_name: tinode
+    image: tinode/tinode-mongodb:0.22.13
+    ports:
+      - "127.0.0.1:16060:16060"
+      - "127.0.0.1:6060:6060"
+    volumes:
+      - ./tinode.conf:/etc/tinode/tinode.conf:ro
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+      mongodb-secondary:
+        condition: service_healthy
+
+  mongodb-primary:
+    container_name: mongodb-primary
+    hostname: mongodb
+    image: mongo:latest
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongodb-data-primary:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  mongodb-secondary:
+    container_name: mongodb-secondary
+    image: mongo:latest
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27018:27017"
+    volumes:
+      - mongodb-data-secondary:/data/db
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  mongo-setup:
+    container_name: mongo-setup
+    image: mongo:latest
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+      mongodb-secondary:
+        condition: service_healthy
+    command: >
+      mongosh --host mongodb:27017 --eval
+      'rs.initiate({
+        _id: "rs0",
+        members: [
+          {_id: 0, host: "mongodb:27017"},
+          {_id: 1, host: "mongodb-secondary:27017"}
+        ]
+      })'
+
+  mongo-admin:
+    container_name: mongo-admin
+    image: mongo-express:latest
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+      - ME_CONFIG_MONGODB_PORT=27017
+    depends_on:
+      mongodb-primary:
+        condition: service_healthy
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:8081 || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  valkey-primary:
+    container_name: valkey-primary
+    image: valkey/valkey:7.2-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: valkey-server --port 6379 --requirepass ${REDIS_PASS}
+    environment:
+      - REDIS_PASS=${REDIS_PASS}
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${REDIS_PASS}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  valkey-secondary:
+    container_name: valkey-secondary
+    image: valkey/valkey:7.2-alpine
+    ports:
+      - "127.0.0.1:6380:6379"
+    command: valkey-server --port 6379 --requirepass ${REDIS_PASS} --masterauth ${REDIS_PASS} --replicaof valkey-primary 6379
+    environment:
+      - REDIS_PASS=${REDIS_PASS}
+    depends_on:
+      valkey-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${REDIS_PASS}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
