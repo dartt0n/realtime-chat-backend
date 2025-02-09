@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/dartt0n/realtime-chat-backend/controllers"
-	"github.com/dartt0n/realtime-chat-backend/db"
 	"github.com/dartt0n/realtime-chat-backend/forms"
 	"github.com/dartt0n/realtime-chat-backend/kv"
 	"github.com/dartt0n/realtime-chat-backend/service"
@@ -100,12 +99,6 @@ func main() {
 	r.Use(SlogMiddleware(logger))
 	r.Use(gzip.Gzip(gzip.DefaultCompression))
 
-	mongoDB, err := db.NewMongoDB(os.Getenv("DB_URI"), os.Getenv("DB_NAME"))
-	if err != nil {
-		slog.Error("failed to connect to database", "error", err)
-		os.Exit(1)
-	}
-
 	redisDb, err := strconv.ParseInt(os.Getenv("REDIS_DB"), 0, 0)
 	if err != nil {
 		slog.Error("failed to parse REDIS_DB env variable", "error", err)
@@ -118,12 +111,16 @@ func main() {
 	}
 
 	authService := service.NewAuthService(redisKV)
-	userService := service.NewUserService(redisKV, mongoDB, authService)
+	tinodeService, err := service.NewTinodeService(os.Getenv("TINODE_ADDR"), redisKV, authService)
+	if err != nil {
+		slog.Error("failed to connect to tinode", "error", err)
+		os.Exit(1)
+	}
 
 	health := controllers.NewHealthController()
 	r.GET("/health", health.Health)
 
-	user := controllers.NewUserController(userService, authService)
+	user := controllers.NewUserController(tinodeService, authService)
 	r.POST("/signup", user.Register)
 	r.POST("/login", user.Login)
 	r.GET("/logout", user.Logout)

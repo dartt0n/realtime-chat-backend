@@ -11,12 +11,12 @@ import (
 
 // UserController handles user-related HTTP requests and responses
 type UserController struct {
-	user *service.UserService
+	user *service.TinodeService
 	auth *service.AuthService
 }
 
 // NewUserController creates and returns a new UserController instance
-func NewUserController(user *service.UserService, auth *service.AuthService) *UserController {
+func NewUserController(user *service.TinodeService, auth *service.AuthService) *UserController {
 	return &UserController{user: user, auth: auth}
 }
 
@@ -57,7 +57,7 @@ func (ctrl UserController) Register(c *gin.Context) {
 		return
 	}
 
-	_, err := ctrl.user.Register(registerForm)
+	_, err := ctrl.user.CreateUser(registerForm)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{"message": err.Error()})
 		return
