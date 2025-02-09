@@ -16,7 +16,7 @@ type MessageController struct {
 var msgForm = new(forms.MessageForm)
 
 func NewMessageController(tinode *service.TinodeService, auth *service.AuthService) *MessageController {
-	return &MessageController{tinode: tinode}
+	return &MessageController{tinode: tinode, auth: auth}
 }
 
 func (ctrl MessageController) FetchLast(c *gin.Context) {
@@ -26,7 +26,7 @@ func (ctrl MessageController) FetchLast(c *gin.Context) {
 		return
 	}
 
-	lastMsg, err := ctrl.tinode.FetchLastMessage()
+	lastMsg, err := ctrl.tinode.FetchLastMsgs()
 	if err != nil {
 		c.JSON(http.StatusNotAcceptable, gin.H{"error": err.Error()})
 		return
@@ -36,7 +36,7 @@ func (ctrl MessageController) FetchLast(c *gin.Context) {
 }
 
 func (ctrl MessageController) SendMsg(c *gin.Context) {
-	_, err := ctrl.auth.ExtractTokenMetadata(c.Request)
+	au, err := ctrl.auth.ExtractTokenMetadata(c.Request)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"message": "User not logged in"})
 		return
@@ -49,7 +49,7 @@ func (ctrl MessageController) SendMsg(c *gin.Context) {
 		return
 	}
 
-	err = ctrl.tinode.SendMessage(textForm.Content)
+	err = ctrl.tinode.SendMessage(au.AccessUUID, textForm.Content)
 	if err != nil {
 		c.JSON(http.StatusNotAcceptable, gin.H{"error": err.Error()})
 		return

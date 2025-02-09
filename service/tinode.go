@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -15,6 +16,9 @@ import (
 	"github.com/dartt0n/realtime-chat-backend/models"
 	"github.com/google/uuid"
 	"github.com/tinode/chat/pbx"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -29,13 +33,16 @@ type TinodeService struct {
 	auth   *AuthService
 	topic  models.Topic
 	reqres *sync.Map // Maps request IDs to response channels
+
+	mongouri string
+	mongodb  string
 }
 
 // NewTinodeService creates a new TinodeService instance
 // addr: Tinode server address (e.g. "localhost:6061")
 // kv: Key-value store implementation
 // auth: Authentication service instance
-func NewTinodeService(addr string, generalTopic models.Topic, kv kv.KeyValueStore, auth *AuthService) (*TinodeService, error) {
+func NewTinodeService(addr string, generalTopic models.Topic, mongouri, mongodb string, kv kv.KeyValueStore, auth *AuthService) (*TinodeService, error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
@@ -48,12 +55,14 @@ func NewTinodeService(addr string, generalTopic models.Topic, kv kv.KeyValueStor
 	}
 
 	s := &TinodeService{
-		kv:     kv,
-		client: client,
-		stream: stream,
-		auth:   auth,
-		topic:  generalTopic,
-		reqres: &sync.Map{},
+		kv:       kv,
+		client:   client,
+		stream:   stream,
+		auth:     auth,
+		topic:    generalTopic,
+		reqres:   &sync.Map{},
+		mongouri: mongouri,
+		mongodb:  mongodb,
 	}
 
 	go s.ListenUpdates()
@@ -93,6 +102,13 @@ func (s TinodeService) ListenUpdates() {
 			slog.Info("received presence message", "topic", m.Pres.Topic, "msg", m.Pres.What.String())
 		case *pbx.ServerMsg_Meta:
 			slog.Info("received metadata message", "topic", m.Meta.Topic, "msg", m.Meta.Desc)
+
+			// Route meta message to waiting request handler if one exists
+			if ch, ok := s.reqres.Load(m.Meta.Id); ok {
+				ch.(chan any) <- m
+			} else {
+				slog.Warn("received unawaited meta message", "topic", m.Meta.Topic, "msg", m.Meta.Desc)
+			}
 		case *pbx.ServerMsg_Info:
 			slog.Info("received info message", "topic", m.Info.Topic, "msg", m.Info.What.String())
 		default:
@@ -174,7 +190,7 @@ func (s TinodeService) CreateUser(form forms.RegisterForm) (user models.User, er
 		return user, errors.New("unexpected response code")
 	}
 
-	user.ID = models.UserID(res.Ctrl.Params["user"])
+	user.ID = models.UserID(strings.Trim(string(res.Ctrl.Params["user"]), "\""))
 	user.Email = form.Email
 	user.Password = form.Password
 
@@ -214,13 +230,13 @@ func (s TinodeService) Login(form forms.LoginForm) (user models.User, token mode
 		return user, token, errors.New("unexpected response code")
 	}
 
-	td, err := s.auth.CreateToken(models.UserID(res.Ctrl.Params["user_id"]))
+	td, err := s.auth.CreateToken(models.UserID(strings.Trim(string(res.Ctrl.Params["user"]), "\"")))
 	if err != nil {
 		slog.Error("failed to create token", "error", err)
 		return user, token, err
 	}
 
-	err = s.auth.CreateAuth(models.UserID(res.Ctrl.Params["user_id"]), td)
+	err = s.auth.CreateAuth(models.UserID(strings.Trim(string(res.Ctrl.Params["user"]), "\"")), td)
 	if err != nil {
 		slog.Error("failed to create auth", "error", err)
 		return user, token, err
@@ -236,17 +252,64 @@ func (s TinodeService) Login(form forms.LoginForm) (user models.User, token mode
 		return user, token, err
 	}
 
-	user.ID = models.UserID(res.Ctrl.Params["user_id"])
+	user.ID = models.UserID(strings.Trim(string(res.Ctrl.Params["user"]), "\""))
 	user.Email = form.Email
 	user.Password = form.Password
 	return user, token, nil
 }
 
-func (s TinodeService) FetchLastMessage() (models.Message, error) {
-	return models.Message{}, nil
+func (s TinodeService) FetchLastMsgs() ([]models.Message, error) {
+	conn, err := mongo.Connect(options.Client().ApplyURI(s.mongouri))
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Disconnect(context.Background())
+
+	db := conn.Database(s.mongodb)
+
+	cursor, err := db.Collection("messages").Find(context.Background(), bson.D{bson.E{Key: "topic", Value: s.topic.ID}}, options.Find().SetSort(bson.D{bson.E{Key: "seq_id", Value: -1}}).SetLimit(50))
+	if err != nil {
+		slog.Error("failed to fetch last messages", "error", err)
+		return nil, err
+	}
+	defer cursor.Close(context.Background())
+
+	var messages []models.Message
+	if err := cursor.All(context.Background(), &messages); err != nil {
+		slog.Error("failed to fetch all messages", "error", err)
+		return nil, err
+	}
+
+	return messages, nil
 }
 
-func (s TinodeService) SendMessage(content string) error {
+func (s TinodeService) SendMessage(accessUUID, content string) error {
+	rID := uuid.NewString()
+
+	// if err := s.switchUser(accessUUID); err != nil {
+	// 	return err
+	// }
+
+	msg := &pbx.ClientMsg{
+		Message: &pbx.ClientMsg_Pub{
+			Pub: &pbx.ClientPub{
+				Id:      rID,
+				Topic:   s.topic.ID,
+				Content: []byte(fmt.Sprintf(`"%s"`, content)),
+				NoEcho:  false,
+			},
+		},
+	}
+
+	res, err := s.send(rID, msg)
+	if err != nil {
+		return err
+	}
+
+	if res.(*pbx.ServerMsg_Ctrl).Ctrl.Code/100 != 2 {
+		return errors.New("unexpected response code")
+	}
+
 	return nil
 }
 
@@ -395,4 +458,70 @@ func (s TinodeService) joinTopic(topicID string) (err error) {
 	}
 
 	return nil
+}
+
+func (s TinodeService) switchUser(accessUUID string) (err error) {
+	rID := uuid.NewString()
+	token, err := s.kv.Get(accessUUID + ":token")
+	if err != nil {
+		slog.Error("failed to get token", "error", err)
+		return err
+	}
+
+	req := &pbx.ClientMsg{Message: &pbx.ClientMsg_Login{
+		Login: &pbx.ClientLogin{
+			Id:     rID,
+			Scheme: "token",
+			Secret: []byte(token),
+		},
+	}}
+
+	rawres, err := s.send(rID, req)
+	if err != nil {
+		slog.Error("failed to send login message", "error", err, "id", rID)
+		return err
+	}
+
+	res, ok := rawres.(*pbx.ServerMsg_Ctrl)
+	if !ok {
+		slog.Error("failed to project type to ServerMsg_Ctrl", "id", rID, "res", rawres)
+		return errors.New("unexpected response from event loop")
+	}
+	slog.Debug("received response from event loop", "res", res)
+
+	if res.Ctrl.Code != 200 {
+		slog.Error("unexpected response code", "code", res.Ctrl.Code, "res", res)
+		return errors.New("unexpected response code")
+	}
+
+	return nil
+}
+
+func (s TinodeService) getLastMsgID() (int32, error) {
+	rID := uuid.NewString()
+
+	msg := &pbx.ClientMsg{Message: &pbx.ClientMsg_Get{
+		Get: &pbx.ClientGet{
+			Id:    rID,
+			Topic: s.topic.ID,
+			Query: &pbx.GetQuery{
+				What: "desc",
+			},
+		},
+	}}
+
+	rawres, err := s.send(rID, msg)
+	if err != nil {
+		slog.Error("failed to send message", "error", err, "id", rID)
+		return 0, err
+	}
+
+	res, ok := rawres.(*pbx.ServerMsg_Meta)
+	if !ok {
+		slog.Error("failed to project type to ServerMsg_Ctrl", "id", rID, "res", rawres)
+		return 0, errors.New("unexpected response from event loop")
+	}
+	slog.Debug("received response from event loop", "res", res)
+
+	return res.Meta.Desc.SeqId, nil
 }

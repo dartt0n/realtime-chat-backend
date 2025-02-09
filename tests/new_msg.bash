@@ -2,5 +2,6 @@
 
 curl --request POST \
     --url http://localhost:8080/message \
-    -H 'Authorization: '$TOKEN'' \
-    --header 'User-Agent: insomnia/10.3.0'
+    --header 'Authorization: Bearer '$TOKEN'' \
+    --header 'Content-Type: application/json' \
+    --data '{"content": "hello world!"}'

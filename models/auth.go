@@ -14,7 +14,7 @@ type TokenDetails struct {
 // AccessDetails contains the access token UUID and associated user ID
 type AccessDetails struct {
 	AccessUUID string
-	UserID     int64
+	UserID     string
 }
 
 // Token represents the JWT token pair returned to clients with access

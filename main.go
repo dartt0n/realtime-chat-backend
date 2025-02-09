@@ -112,7 +112,11 @@ func main() {
 	}
 
 	authService := service.NewAuthService(redisKV)
-	tinodeService, err := service.NewTinodeService(os.Getenv("TINODE_ADDR"), models.Topic{ID: os.Getenv("TINODE_TOPIC_ID"), Name: "general"}, redisKV, authService)
+	tinodeService, err := service.NewTinodeService(
+		os.Getenv("TINODE_ADDR"),
+		models.Topic{ID: os.Getenv("TINODE_TOPIC_ID"), Name: "general"},
+		os.Getenv("DB_URI"), os.Getenv("DB_NAME"),
+		redisKV, authService)
 	if err != nil {
 		slog.Error("failed to connect to tinode", "error", err)
 		os.Exit(1)

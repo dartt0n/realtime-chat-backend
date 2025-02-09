@@ -2,9 +2,9 @@ package service
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +46,7 @@ func (s AuthService) CreateToken(userID models.UserID) (*models.TokenDetails, er
 	at := jwt.NewWithClaims(jwt.SigningMethodHS256, atClaims)
 	td.AccessToken, err = at.SignedString([]byte(os.Getenv("ACCESS_SECRET")))
 	if err != nil {
+		slog.Error("failed to create access token", "error", err, "user_id", userID)
 		return nil, err
 	}
 
@@ -57,6 +58,7 @@ func (s AuthService) CreateToken(userID models.UserID) (*models.TokenDetails, er
 	rt := jwt.NewWithClaims(jwt.SigningMethodHS256, rtClaims)
 	td.RefreshToken, err = rt.SignedString([]byte(os.Getenv("REFRESH_SECRET")))
 	if err != nil {
+		slog.Error("failed to create refresh token", "error", err, "user_id", userID)
 		return nil, err
 	}
 	return td, nil
@@ -70,11 +72,13 @@ func (s AuthService) CreateAuth(userID models.UserID, td *models.TokenDetails) (
 
 	err = s.kv.Set(td.AccessUUID, userID.String(), at.Sub(now))
 	if err != nil {
+		slog.Error("failed to store access token", "error", err, "user_id", userID, "access_uuid", td.AccessUUID)
 		return err
 	}
 
 	err = s.kv.Set(td.RefreshUUID, userID.String(), rt.Sub(now))
 	if err != nil {
+		slog.Error("failed to store refresh token", "error", err, "user_id", userID, "refresh_uuid", td.RefreshUUID)
 		return err
 	}
 	return nil
@@ -88,7 +92,8 @@ func (s AuthService) ExtractToken(r *http.Request) string {
 	if len(strArr) == 2 {
 		return strArr[1]
 	}
-	return ""
+
+	return strArr[0]
 }
 
 // VerifyToken validates the token signature and returns the parsed token
@@ -97,11 +102,13 @@ func (s AuthService) VerifyToken(r *http.Request) (*jwt.Token, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		//Make sure that the token method conform to "SigningMethodHMAC"
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			slog.Error("invalid signing method", "method", token.Header["alg"])
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte(os.Getenv("ACCESS_SECRET")), nil
 	})
 	if err != nil {
+		slog.Error("failed to verify token", "error", err)
 		return nil, err
 	}
 	return token, nil
@@ -111,9 +118,11 @@ func (s AuthService) VerifyToken(r *http.Request) (*jwt.Token, error) {
 func (s AuthService) TokenValid(r *http.Request) error {
 	token, err := s.VerifyToken(r)
 	if err != nil {
+		slog.Error("token verification failed", "error", err)
 		return err
 	}
 	if _, ok := token.Claims.(jwt.Claims); !ok && !token.Valid {
+		slog.Error("invalid token claims")
 		return err
 	}
 	return nil
@@ -123,23 +132,24 @@ func (s AuthService) TokenValid(r *http.Request) error {
 func (s AuthService) ExtractTokenMetadata(r *http.Request) (*models.AccessDetails, error) {
 	token, err := s.VerifyToken(r)
 	if err != nil {
+		slog.Error("failed to verify token for metadata extraction", "error", err)
 		return nil, err
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if ok && token.Valid {
 		accessUUID, ok := claims["access_uuid"].(string)
 		if !ok {
+			slog.Error("missing access_uuid in token claims")
 			return nil, err
 		}
-		userID, err := strconv.ParseInt(fmt.Sprintf("%.f", claims["user_id"]), 10, 64)
-		if err != nil {
-			return nil, err
-		}
+		userID := claims["user_id"].(string)
+
 		return &models.AccessDetails{
 			AccessUUID: accessUUID,
 			UserID:     userID,
 		}, nil
 	}
+	slog.Error("invalid token or claims")
 	return nil, err
 }
 
@@ -147,11 +157,13 @@ func (s AuthService) ExtractTokenMetadata(r *http.Request) (*models.AccessDetail
 func (s AuthService) FetchAuth(authD *models.AccessDetails) (userID models.UserID, err error) {
 	rawID, err := s.kv.Get(authD.AccessUUID)
 	if err != nil {
+		slog.Error("failed to fetch auth details", "error", err, "access_uuid", authD.AccessUUID)
 		return userID, err
 	}
 
 	userID, err = models.ParseUserID(rawID)
 	if err != nil {
+		slog.Error("failed to parse user ID", "error", err, "raw_id", rawID)
 		return userID, err
 	}
 
@@ -162,11 +174,13 @@ func (s AuthService) FetchAuth(authD *models.AccessDetails) (userID models.UserI
 func (s AuthService) DeleteAuth(givenUUID string) (userID models.UserID, err error) {
 	rawID, err := s.kv.Del(givenUUID)
 	if err != nil {
+		slog.Error("failed to delete auth details", "error", err, "uuid", givenUUID)
 		return userID, err
 	}
 
 	userID, err = models.ParseUserID(rawID)
 	if err != nil {
+		slog.Error("failed to parse user ID during deletion", "error", err, "raw_id", rawID)
 		return userID, err
 	}
 
