@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/dartt0n/realtime-chat-backend/forms"
 	"github.com/dartt0n/realtime-chat-backend/kv"
@@ -27,8 +26,8 @@ type TinodeService struct {
 	client pbx.NodeClient             // gRPC client for Tinode server
 	stream pbx.Node_MessageLoopClient // Bi-directional message stream
 
-	auth *AuthService
-
+	auth   *AuthService
+	topic  models.Topic
 	reqres *sync.Map // Maps request IDs to response channels
 }
 
@@ -36,7 +35,7 @@ type TinodeService struct {
 // addr: Tinode server address (e.g. "localhost:6061")
 // kv: Key-value store implementation
 // auth: Authentication service instance
-func NewTinodeService(addr string, kv kv.KeyValueStore, auth *AuthService) (*TinodeService, error) {
+func NewTinodeService(addr string, generalTopic models.Topic, kv kv.KeyValueStore, auth *AuthService) (*TinodeService, error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
@@ -48,30 +47,23 @@ func NewTinodeService(addr string, kv kv.KeyValueStore, auth *AuthService) (*Tin
 		return nil, err
 	}
 
-	t := &TinodeService{
+	s := &TinodeService{
 		kv:     kv,
 		client: client,
 		stream: stream,
 		auth:   auth,
+		topic:  generalTopic,
 		reqres: &sync.Map{},
 	}
 
-	go t.ListenUpdates()
+	go s.ListenUpdates()
 
 	// Send initial handshake message
-	rID := uuid.NewString()
-	if _, err := t.Send(rID, &pbx.ClientMsg{Message: &pbx.ClientMsg_Hi{
-		Hi: &pbx.ClientHi{
-			Id:        rID,
-			UserAgent: "golang/1.0",
-			Ver:       "0.22.13",
-			Lang:      "EN",
-		},
-	}}); err != nil {
+	if err := s.ping(); err != nil {
 		return nil, err
 	}
 
-	return t, nil
+	return s, nil
 }
 
 // ListenUpdates handles incoming messages from the Tinode server
@@ -109,11 +101,161 @@ func (s TinodeService) ListenUpdates() {
 	}
 }
 
+// ping sends a Hi message to the server and waits for a response
+func (s TinodeService) ping() error {
+	rID := uuid.NewString()
+	_, err := s.send(rID, &pbx.ClientMsg{Message: &pbx.ClientMsg_Hi{
+		Hi: &pbx.ClientHi{
+			Id:        rID,
+			UserAgent: "golang/1.0",
+			Ver:       "0.22.13",
+			Lang:      "EN",
+		},
+	}})
+
+	return err
+}
+
+// CreateUser registers a new user with the Tinode server
+// form: Registration form containing email and password
+// Returns the created user model and any error
+func (s TinodeService) CreateUser(form forms.RegisterForm) (user models.User, err error) {
+	rID := uuid.NewString()
+	username := generateUsername(form.Email)
+
+	publicPayload, err := json.Marshal(map[string]any{
+		"username": username,
+	})
+	if err != nil {
+		return user, err
+	}
+
+	privatePayload, err := json.Marshal(map[string]any{
+		"email": form.Email,
+	})
+	if err != nil {
+		return user, err
+	}
+
+	req := &pbx.ClientMsg{Message: &pbx.ClientMsg_Acc{
+		Acc: &pbx.ClientAcc{
+			Id:     rID,
+			UserId: "new" + username,
+			Scheme: "basic",
+			Secret: []byte(username + ":" + form.Password),
+			Login:  false,
+			Tags:   []string{},
+			Desc: &pbx.SetDesc{
+				DefaultAcs: &pbx.DefaultAcsMode{
+					Auth: "JRWPA",
+					Anon: "N",
+				},
+				Public:  publicPayload,
+				Private: privatePayload,
+			},
+		},
+	}}
+	slog.Debug("sending account registration message", "id", rID, "msg", req)
+
+	rawres, err := s.send(rID, req)
+	if err != nil {
+		slog.Error("failed to send account registration message", "error", err, "id", rID)
+		return user, err
+	}
+
+	res, ok := rawres.(*pbx.ServerMsg_Ctrl)
+	if !ok {
+		slog.Error("failed to project type to ServerMsg_Ctrl", "id", rID, "res", rawres)
+		return user, errors.New("unexpected response from event loop")
+	}
+	slog.Debug("received response from event loop", "res", res)
+
+	if res.Ctrl.Code != 201 {
+		return user, errors.New("unexpected response code")
+	}
+
+	user.ID = models.UserID(res.Ctrl.Params["user"])
+	user.Email = form.Email
+	user.Password = form.Password
+
+	return user, nil
+}
+
+// Login authenticates a user with the Tinode server
+// form: Login form containing email and password
+// Returns the user model, authentication tokens and any error
+func (s TinodeService) Login(form forms.LoginForm) (user models.User, token models.Token, err error) {
+	rID := uuid.NewString()
+	username := generateUsername(form.Email)
+
+	req := &pbx.ClientMsg{Message: &pbx.ClientMsg_Login{
+		Login: &pbx.ClientLogin{
+			Id:     rID,
+			Scheme: "basic",
+			Secret: []byte(username + ":" + form.Password),
+		},
+	}}
+
+	rawres, err := s.send(rID, req)
+	if err != nil {
+		slog.Error("failed to send login message", "error", err, "id", rID)
+		return user, token, err
+	}
+
+	res, ok := rawres.(*pbx.ServerMsg_Ctrl)
+	if !ok {
+		slog.Error("failed to project type to ServerMsg_Ctrl", "id", rID, "res", rawres)
+		return user, token, errors.New("unexpected response from event loop")
+	}
+	slog.Debug("received response from event loop", "res", res)
+
+	if res.Ctrl.Code != 200 {
+		slog.Error("unexpected response code", "code", res.Ctrl.Code, "res", res)
+		return user, token, errors.New("unexpected response code")
+	}
+
+	td, err := s.auth.CreateToken(models.UserID(res.Ctrl.Params["user_id"]))
+	if err != nil {
+		slog.Error("failed to create token", "error", err)
+		return user, token, err
+	}
+
+	err = s.auth.CreateAuth(models.UserID(res.Ctrl.Params["user_id"]), td)
+	if err != nil {
+		slog.Error("failed to create auth", "error", err)
+		return user, token, err
+	}
+
+	token.AccessToken = td.AccessToken
+	token.RefreshToken = td.RefreshToken
+
+	s.kv.Set(td.AccessUUID+":token", string(res.Ctrl.Params["token"]), 0)
+
+	if err := s.joinTopic(s.topic.ID); err != nil {
+		slog.Error("failed to join topic", "error", err)
+		return user, token, err
+	}
+
+	user.ID = models.UserID(res.Ctrl.Params["user_id"])
+	user.Email = form.Email
+	user.Password = form.Password
+	return user, token, nil
+}
+
+func (s TinodeService) FetchLastMessage() (models.Message, error) {
+	return models.Message{}, nil
+}
+
+func (s TinodeService) SendMessage(content string) error {
+	return nil
+}
+
 // declareReq creates a new response channel for a request ID
 func (s TinodeService) declareReq(rID string) error {
 	if _, ok := s.reqres.Load(rID); ok {
 		return errors.New("dublicate request id")
 	}
+	// unfortunately, go type system doesn't allow us to create discriminated unions, so we have to use any (interface{})
 	s.reqres.Store(rID, make(chan any, 1))
 	slog.Debug("declared request", "id", rID)
 
@@ -131,11 +273,11 @@ func (s TinodeService) revokeReq(rID string) error {
 	return nil
 }
 
-// Send transmits a message to the Tinode server and waits for a response
+// send transmits a message to the Tinode server and waits for a response
 // rID: Request ID for tracking the response
 // msg: Message to send
 // Returns the server response and any error
-func (s TinodeService) Send(rID string, msg *pbx.ClientMsg) (res any, err error) {
+func (s TinodeService) send(rID string, msg *pbx.ClientMsg) (res any, err error) {
 	err = s.declareReq(rID)
 	if err != nil {
 		slog.Error("failed to declare request", "error", err, "id", rID)
@@ -185,124 +327,72 @@ func generateUsername(email string) string {
 	return prefix + "_" + provider + "_" + shorthash
 }
 
-// CreateUser registers a new user with the Tinode server
-// form: Registration form containing email and password
-// Returns the created user model and any error
-func (s TinodeService) CreateUser(form forms.RegisterForm) (user models.User, err error) {
+func (s TinodeService) userToken(user, pass string) (string, error) {
 	rID := uuid.NewString()
-	username := generateUsername(form.Email)
-
-	publicPayload, err := json.Marshal(map[string]any{
-		"username": username,
-	})
-	if err != nil {
-		return user, err
-	}
-
-	privatePayload, err := json.Marshal(map[string]any{
-		"email": form.Email,
-	})
-	if err != nil {
-		return user, err
-	}
-
-	req := &pbx.ClientMsg{Message: &pbx.ClientMsg_Acc{
-		Acc: &pbx.ClientAcc{
-			Id:     rID,
-			UserId: "new" + username,
-			Scheme: "basic",
-			Secret: []byte(username + ":" + form.Password),
-			Login:  false,
-			Tags:   []string{},
-			Desc: &pbx.SetDesc{
-				DefaultAcs: &pbx.DefaultAcsMode{
-					Auth: "JRWPA",
-					Anon: "N",
-				},
-				Public:  publicPayload,
-				Private: privatePayload,
-			},
-		},
-	}}
-	slog.Debug("sending account registration message", "id", rID, "msg", req)
-
-	rawres, err := s.Send(rID, req)
-	if err != nil {
-		slog.Error("failed to send account registration message", "error", err, "id", rID)
-		return user, err
-	}
-
-	res, ok := rawres.(*pbx.ServerMsg_Ctrl)
-	if !ok {
-		slog.Error("failed to project type to ServerMsg_Ctrl", "id", rID, "res", rawres)
-		return user, errors.New("unexpected response from event loop")
-	}
-	slog.Debug("received response from event loop", "res", res)
-
-	if res.Ctrl.Code != 201 {
-		return user, errors.New("unexpected response code")
-	}
-
-	user.ID = models.UserID(res.Ctrl.Params["user"])
-	user.Email = form.Email
-	user.Password = form.Password
-
-	return user, nil
-}
-
-// Login authenticates a user with the Tinode server
-// form: Login form containing email and password
-// Returns the user model, authentication tokens and any error
-func (s TinodeService) Login(form forms.LoginForm) (user models.User, token models.Token, err error) {
-	rID := uuid.NewString()
-	username := generateUsername(form.Email)
 
 	req := &pbx.ClientMsg{Message: &pbx.ClientMsg_Login{
 		Login: &pbx.ClientLogin{
 			Id:     rID,
 			Scheme: "basic",
-			Secret: []byte(username + ":" + form.Password),
+			Secret: []byte(user + ":" + pass),
 		},
 	}}
 
-	rawres, err := s.Send(rID, req)
+	rawres, err := s.send(rID, req)
 	if err != nil {
 		slog.Error("failed to send login message", "error", err, "id", rID)
-		return user, token, err
+		return "", err
 	}
 
 	res, ok := rawres.(*pbx.ServerMsg_Ctrl)
 	if !ok {
 		slog.Error("failed to project type to ServerMsg_Ctrl", "id", rID, "res", rawres)
-		return user, token, errors.New("unexpected response from event loop")
+		return "", errors.New("unexpected response from event loop")
 	}
 	slog.Debug("received response from event loop", "res", res)
 
 	if res.Ctrl.Code != 200 {
 		slog.Error("unexpected response code", "code", res.Ctrl.Code, "res", res)
-		return user, token, errors.New("unexpected response code")
+		return "", errors.New("unexpected response code")
 	}
 
-	td, err := s.auth.CreateToken(models.UserID(res.Ctrl.Params["user_id"]))
+	return string(res.Ctrl.Params["token"]), nil
+}
+
+func (s TinodeService) joinTopic(topicID string) (err error) {
+	rID := uuid.NewString()
+
+	msg := &pbx.ClientMsg{Message: &pbx.ClientMsg_Sub{
+		Sub: &pbx.ClientSub{
+			Id:    rID,
+			Topic: topicID,
+			SetQuery: &pbx.SetQuery{
+				Desc: &pbx.SetDesc{
+					DefaultAcs: &pbx.DefaultAcsMode{
+						Auth: "JRWPA",
+						Anon: "N",
+					},
+				},
+			},
+		},
+	}}
+
+	rawres, err := s.send(rID, msg)
 	if err != nil {
-		slog.Error("failed to create token", "error", err)
-		return user, token, err
+		slog.Error("failed to send topic creation message", "error", err, "id", rID)
+		return err
 	}
 
-	err = s.auth.CreateAuth(models.UserID(res.Ctrl.Params["user_id"]), td)
-	if err != nil {
-		slog.Error("failed to create auth", "error", err)
-		return user, token, err
+	res, ok := rawres.(*pbx.ServerMsg_Ctrl)
+	if !ok {
+		slog.Error("failed to project type to ServerMsg_Ctrl", "id", rID, "res", rawres)
+		return errors.New("unexpected response from event loop")
+	}
+	slog.Debug("received response from event loop", "res", res)
+
+	if res.Ctrl.Code != 200 {
+		return errors.New("unexpected response code")
 	}
 
-	token.AccessToken = td.AccessToken
-	token.RefreshToken = td.RefreshToken
-
-	s.kv.Set(td.AccessUUID+":token", string(res.Ctrl.Params["token"]), 10*time.Minute)
-
-	user.ID = models.UserID(res.Ctrl.Params["user_id"])
-	user.Email = form.Email
-	user.Password = form.Password
-
-	return user, token, nil
+	return nil
 }

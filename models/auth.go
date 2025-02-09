@@ -1,6 +1,7 @@
 package models
 
-// TokenDetails ...
+// TokenDetails contains authentication token data including access and refresh tokens,
+// their UUIDs and expiration timestamps
 type TokenDetails struct {
 	AccessToken  string
 	RefreshToken string
@@ -10,13 +11,14 @@ type TokenDetails struct {
 	RtExpires    int64
 }
 
-// AccessDetails ...
+// AccessDetails contains the access token UUID and associated user ID
 type AccessDetails struct {
 	AccessUUID string
 	UserID     int64
 }
 
-// Token ...
+// Token represents the JWT token pair returned to clients with access
+// and refresh tokens
 type Token struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`

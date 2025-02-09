@@ -20,6 +20,7 @@ services:
       - REDIS_DB=0
       - REDIS_PASS=${REDIS_PASS}
       - TINODE_ADDR=tinode:16060
+      - TINODE_TOPIC_ID=${TINODE_TOPIC_ID}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
@@ -45,6 +46,8 @@ services:
     ports:
       - "127.0.0.1:16060:16060"
       - "127.0.0.1:6060:6060"
+    volumes:
+      - ./tinode.conf:/etc/tinode/tinode.conf:ro
     depends_on:
       mongodb-primary:
         condition: service_healthy

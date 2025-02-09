@@ -10,6 +10,7 @@ import (
 	"github.com/dartt0n/realtime-chat-backend/controllers"
 	"github.com/dartt0n/realtime-chat-backend/forms"
 	"github.com/dartt0n/realtime-chat-backend/kv"
+	"github.com/dartt0n/realtime-chat-backend/models"
 	"github.com/dartt0n/realtime-chat-backend/service"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-contrib/requestid"
@@ -111,7 +112,7 @@ func main() {
 	}
 
 	authService := service.NewAuthService(redisKV)
-	tinodeService, err := service.NewTinodeService(os.Getenv("TINODE_ADDR"), redisKV, authService)
+	tinodeService, err := service.NewTinodeService(os.Getenv("TINODE_ADDR"), models.Topic{ID: os.Getenv("TINODE_TOPIC_ID"), Name: "general"}, redisKV, authService)
 	if err != nil {
 		slog.Error("failed to connect to tinode", "error", err)
 		os.Exit(1)
@@ -127,6 +128,10 @@ func main() {
 
 	auth := controllers.NewAuthController(authService)
 	r.POST("/refresh", auth.Refresh)
+
+	msg := controllers.NewMessageController(tinodeService, authService)
+	r.GET("/messages", msg.FetchLast)
+	r.POST("/message", msg.SendMsg)
 
 	port := os.Getenv("PORT")
 

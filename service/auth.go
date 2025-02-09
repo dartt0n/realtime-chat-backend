@@ -14,16 +14,19 @@ import (
 	"github.com/google/uuid"
 )
 
+// AuthService handles authentication related operations using a key-value store
 type AuthService struct {
 	kv kv.KeyValueStore
 }
 
+// NewAuthService creates a new AuthService instance with the provided key-value store
 func NewAuthService(kv kv.KeyValueStore) *AuthService {
 	return &AuthService{
 		kv: kv,
 	}
 }
 
+// CreateToken generates access and refresh tokens for a given user ID
 func (s AuthService) CreateToken(userID models.UserID) (*models.TokenDetails, error) {
 	td := &models.TokenDetails{}
 	td.AtExpires = time.Now().Add(time.Minute * 15).Unix() // 15 minutes
@@ -59,7 +62,7 @@ func (s AuthService) CreateToken(userID models.UserID) (*models.TokenDetails, er
 	return td, nil
 }
 
-// CreateAuth ...
+// CreateAuth stores the token details in the key-value store with appropriate expiration times
 func (s AuthService) CreateAuth(userID models.UserID, td *models.TokenDetails) (err error) {
 	at := time.Unix(td.AtExpires, 0) //converting Unix to UTC(to Time object)
 	rt := time.Unix(td.RtExpires, 0)
@@ -77,7 +80,7 @@ func (s AuthService) CreateAuth(userID models.UserID, td *models.TokenDetails) (
 	return nil
 }
 
-// ExtractToken ...
+// ExtractToken extracts the token from the Authorization header of an HTTP request
 func (s AuthService) ExtractToken(r *http.Request) string {
 	bearToken := r.Header.Get("Authorization")
 	//normally Authorization the_token_xxx
@@ -88,7 +91,7 @@ func (s AuthService) ExtractToken(r *http.Request) string {
 	return ""
 }
 
-// VerifyToken ...
+// VerifyToken validates the token signature and returns the parsed token
 func (s AuthService) VerifyToken(r *http.Request) (*jwt.Token, error) {
 	tokenString := s.ExtractToken(r)
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
@@ -104,7 +107,7 @@ func (s AuthService) VerifyToken(r *http.Request) (*jwt.Token, error) {
 	return token, nil
 }
 
-// TokenValid ...
+// TokenValid checks if the token in the request is valid
 func (s AuthService) TokenValid(r *http.Request) error {
 	token, err := s.VerifyToken(r)
 	if err != nil {
@@ -116,7 +119,7 @@ func (s AuthService) TokenValid(r *http.Request) error {
 	return nil
 }
 
-// ExtractTokenMetadata ...
+// ExtractTokenMetadata extracts the access details from a verified token
 func (s AuthService) ExtractTokenMetadata(r *http.Request) (*models.AccessDetails, error) {
 	token, err := s.VerifyToken(r)
 	if err != nil {
@@ -140,7 +143,7 @@ func (s AuthService) ExtractTokenMetadata(r *http.Request) (*models.AccessDetail
 	return nil, err
 }
 
-// FetchAuth ...
+// FetchAuth retrieves the user ID associated with the given access details from the key-value store
 func (s AuthService) FetchAuth(authD *models.AccessDetails) (userID models.UserID, err error) {
 	rawID, err := s.kv.Get(authD.AccessUUID)
 	if err != nil {
@@ -155,9 +158,9 @@ func (s AuthService) FetchAuth(authD *models.AccessDetails) (userID models.UserI
 	return userID, err
 }
 
-// DeleteAuth ...
-func (s AuthService) DeleteAuth(authUUID string) (userID models.UserID, err error) {
-	rawID, err := s.kv.Del(authUUID)
+// DeleteAuth removes the authentication data for the given UUID from the key-value store
+func (s AuthService) DeleteAuth(givenUUID string) (userID models.UserID, err error) {
+	rawID, err := s.kv.Del(givenUUID)
 	if err != nil {
 		return userID, err
 	}
